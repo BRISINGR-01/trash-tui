@@ -1,0 +1,16 @@
+[package]
+name = "trash-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.41"
+color-eyre = "0.6"
+crossterm = "0.29"
+fuse-rust = "0.4.0"
+ratatui = "0.29.0"
+tracing = "0.1.41"
+tracing-error = "0.2.1"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tui-input = "0.12.1"
+urlencoding = "2.1.3"
