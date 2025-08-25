@@ -53,7 +53,7 @@ pub fn with_search<'a>(items: &'a Vec<TrashEntry>, search: &str) -> Vec<Row<'a>>
     };
 
     let mut results = fuse
-        .search_text_in_iterable(search, items.iter().map(|item| item.name.clone()))
+        .search_text_in_iterable(search, items.iter().map(|item| item.display_name.clone()))
         .into_iter()
         .filter(|result| result.score < 1f64)
         .collect::<Vec<SearchResult>>();

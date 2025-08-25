@@ -1,5 +1,5 @@
 use crate::{
-    files::{get_trash_dirs, list_files_from_dir},
+    io::{get_trash_dirs, list_files_from_dir},
     trash_entry::TrashEntry,
     utils::SortMode,
 };
@@ -28,25 +28,20 @@ impl ListContainer {
         let (_, _, info_dir) = get_trash_dirs();
         let files = list_files_from_dir(&info_dir);
 
-        let current_item_info = self
-            .get_slected_item()
-            .and_then(|item| Some(item.info_path.clone()));
+        if files.is_none() {
+            panic!("Error listing files from {}", info_dir.display());
+        }
 
         self.items = files
+            .unwrap()
             .iter()
-            .filter_map(|file| {
-                file.to_owned()
-                    .and_then(|file| TrashEntry::from_trash_info(&info_dir.join(file)).ok())
-            })
+            .filter_map(|file| TrashEntry::from_trash_info(file).ok())
             .collect::<Vec<TrashEntry>>();
 
         self.sort(sort_mode);
 
-        match current_item_info {
-            Some(info) => self
-                .state
-                .select(self.items.iter().position(|item| item.info_path == info)),
-            None => self.state.select_first(),
+        if self.state.selected().is_none() {
+            self.state.select_first();
         }
     }
 
@@ -90,10 +85,18 @@ impl ListContainer {
 
     pub fn sort(&mut self, sort_mode: &SortMode) {
         match sort_mode {
-            SortMode::NameAsc => self.items.sort_by(|a, b| b.name.cmp(&a.name)),
-            SortMode::NameDesc => self.items.sort_by(|a, b| a.name.cmp(&b.name)),
+            SortMode::NameAsc => self
+                .items
+                .sort_by(|a, b| b.display_name.cmp(&a.display_name)),
+            SortMode::NameDesc => self
+                .items
+                .sort_by(|a, b| a.display_name.cmp(&b.display_name)),
             SortMode::DateAsc => self.items.sort_by(|a, b| b.date.cmp(&a.date)),
             SortMode::DateDesc => self.items.sort_by(|a, b| a.date.cmp(&b.date)),
         }
+    }
+
+    pub fn resize(&mut self, size: usize) {
+        self.list_size = size;
     }
 }

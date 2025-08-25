@@ -2,30 +2,52 @@ use std::{
     env,
     fs::{self, File},
     io::{BufReader, Error, Lines},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use crate::{trash_entry::TrashEntry, ui::Message};
 
 pub fn get_trash_dirs() -> (PathBuf, PathBuf, PathBuf) {
-    match env::var("HOME") {
-        Ok(val) => {
-            let trash_path: PathBuf = [&val, ".local", "share", "Trash"].iter().collect();
-            check_dir(&trash_path);
+    let mut current_path = Path::read_dir(Path::new(".")).unwrap_or_else(|e| panic!("{}", e));
 
-            let files_path = trash_path.join("files");
-            check_dir(&files_path);
+    let local_trash_dirs = current_path.find(|dir| match dir {
+        Ok(dir) => {
+            let p = dir.path();
 
-            let info_path = trash_path.join("info");
-            check_dir(&info_path);
-
-            (trash_path, files_path, info_path)
+            p.is_dir()
+                && p.file_name()
+                    .and_then(|name| name.to_str())
+                    .map_or(false, |val| val.starts_with(".Trash-"))
+                && p.join("files").exists()
+                && p.join("info").exists()
         }
-        Err(_) => panic!("Error getting home directory"),
-    }
+        _ => false,
+    });
+
+    let trash_dir = match local_trash_dirs {
+        Some(dir) if dir.is_ok() => dir.unwrap().path(),
+        _ => PathBuf::from_iter([
+            env::var("HOME")
+                .unwrap_or_else(|_| panic!("Error getting home directory"))
+                .as_str(),
+            ".local",
+            "share",
+            "Trash",
+        ]),
+    };
+
+    validate_dir(&trash_dir);
+
+    let files_path = trash_dir.join("files");
+    validate_dir(&files_path);
+
+    let info_path = trash_dir.join("info");
+    validate_dir(&info_path);
+
+    (trash_dir, files_path, info_path)
 }
 
-fn check_dir(dir: &PathBuf) {
+fn validate_dir(dir: &PathBuf) {
     if !dir.exists() {
         if let Err(err) = fs::create_dir(&dir) {
             panic!("Error creating {}: {}", &dir.display(), err);
@@ -37,16 +59,12 @@ fn check_dir(dir: &PathBuf) {
     }
 }
 
-pub fn list_files_from_dir(dir: &PathBuf) -> Vec<Option<PathBuf>> {
-    match dir.read_dir() {
-        Ok(entries) => entries
-            .map(|entry| match entry {
-                Ok(entry) => Some(entry.path()),
-                Err(_) => None,
-            })
-            .collect(),
-        Err(e) => panic!("Error: {}", e),
-    }
+pub fn list_files_from_dir(dir: &PathBuf) -> Option<Vec<PathBuf>> {
+    dir.read_dir().ok().and_then(|entries| {
+        entries
+            .map(|entry| entry.ok().map(|entry| entry.path()))
+            .collect()
+    })
 }
 
 pub fn empty_bin() -> Result<(), Error> {
@@ -68,7 +86,7 @@ pub fn restore_item(item: &TrashEntry) -> Result<(), Error> {
             format!(
                 "File not found: {}, name: {}, restore location: {}",
                 item.content_path.display(),
-                item.name,
+                item.display_name,
                 item.restore_location.display(),
             ),
         ));
@@ -84,13 +102,17 @@ pub fn restore_item(item: &TrashEntry) -> Result<(), Error> {
 }
 
 pub fn delete_item(item: &TrashEntry) -> Result<(), Error> {
-    if item.info_path.exists() {
-        fs::remove_file(&item.info_path)?;
+    // first handle the content - if it breaks there won't be a dangling info file
+    if item.content_path.exists() {
+        if item.content_path.is_dir() {
+            fs::remove_dir_all(&item.content_path)?;
+        } else {
+            fs::remove_file(&item.content_path)?;
+        }
     }
 
-    let p = item.get_content_path();
-    if p.exists() {
-        fs::remove_file(&p)?;
+    if item.info_path.exists() {
+        fs::remove_file(&item.info_path)?;
     }
 
     Ok(())
@@ -178,7 +200,7 @@ mod tests {
         .unwrap();
 
         let entry = TrashEntry {
-            name: "test_restore.txt".to_string(),
+            display_name: "test_restore.txt".to_string(),
             restore_location: restore_location.clone(),
             info_path: info_location.clone(),
             content_path: test_file.clone(),

@@ -1,5 +1,6 @@
 mod app;
-mod files;
+mod events;
+mod io;
 mod list;
 mod trash_entry;
 mod ui;

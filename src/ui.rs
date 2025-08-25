@@ -12,8 +12,9 @@ use ratatui::{
 use crate::{list::ListContainer, trash_entry::TrashEntry, utils::Mode};
 use std::{cmp::min, ops::Range};
 
-const SECONDARY_COLOR: Color = Color::LightBlue;
-const TERTIARY_COLOR: Color = Color::LightBlue;
+const SECONDARY_COLOR: Color = Color::DarkGray;
+const TERTIARY_COLOR: Color = Color::Green;
+const TEXT_COLOR: Color = Color::White;
 
 pub struct Message {
     pub text: String,
@@ -53,13 +54,7 @@ pub fn layout(input_mode: &Mode) -> Layout {
 pub fn render_empty_list(frame: &mut Frame, area: Rect) {
     frame.render_widget(
         Paragraph::new("Trash is empty")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(fg(SECONDARY_COLOR))
-                    .title("Trash TUI")
-                    .bold(),
-            )
+            .block(block_with_border().title("Trash TUI").bold())
             .alignment(Alignment::Center),
         area,
     );
@@ -75,13 +70,11 @@ pub fn render_list(frame: &mut Frame, area: Rect, items: Vec<Row>, state: &mut T
                 // + 3 is for padding.
             ],
         )
-        .row_highlight_style(fg(Color::White).bg(SECONDARY_COLOR).bold())
+        .row_highlight_style(fg(Color::Black).bg(TERTIARY_COLOR).bold())
         .highlight_symbol(">> ")
         .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(fg(SECONDARY_COLOR))
-                .title("Trash TUI")
+            block_with_border()
+                .title(Span::from("Trash TUI").fg(TEXT_COLOR))
                 .bold(),
         ),
         area,
@@ -109,15 +102,11 @@ pub fn render_search_input(frame: &mut Frame, area: Rect, input: &tui_input::Inp
         Span::from("  ").dim(),
         Span::from(input.value()).bold(),
     ])
-    .style(fg(TERTIARY_COLOR));
+    .style(fg(TEXT_COLOR));
 
     let paragraph = Paragraph::new(input_line)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(fg(SECONDARY_COLOR)),
-        )
-        .style(fg(Color::White));
+        .block(block_with_border())
+        .style(fg(TEXT_COLOR));
 
     let x = input.visual_cursor() + 4; // padding for icon + 1
 
@@ -132,6 +121,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, mode: &Mode) {
 
     let footer = match mode {
         Mode::Sorting => Line::from(vec![
+            Span::from(" "),
             Span::from("Sort by: "),
             special("d"),
             Span::from(" - date, "),
@@ -140,9 +130,10 @@ pub fn render_footer(frame: &mut Frame, area: Rect, mode: &Mode) {
             special("n"),
             Span::from(" - name, "),
             special("N"),
-            Span::from(" - name descending, "),
+            Span::from(" - name ascending, "),
         ]),
         _ => Line::from(vec![
+            Span::from(" "),
             special("◄ ▲ ▼ ►"),
             Span::from(" - move, "),
             special("<q>"),
@@ -151,9 +142,11 @@ pub fn render_footer(frame: &mut Frame, area: Rect, mode: &Mode) {
             Span::from(" - restore, "),
             special("<f>"),
             Span::from(" - search, "),
+            special("<s>"),
+            Span::from(" - sort, "),
             special("<d>"),
             Span::from(" - delete, "),
-            special("<D>"),
+            special("<e>"),
             Span::from(" - empty trash"),
         ]),
     };
@@ -171,10 +164,7 @@ pub fn render_choice_popup(frame: &mut Frame, question: &str) {
 
     frame.render_widget(Clear, area);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(fg(SECONDARY_COLOR))
-        .title("Confirm ");
+    let block = block_with_border().title("Confirm ");
 
     let text = Paragraph::new(vec![
         Line::from(""),
@@ -182,7 +172,7 @@ pub fn render_choice_popup(frame: &mut Frame, question: &str) {
         Line::from(""),
         Line::from(vec![
             Span::styled("[ Enter ]", fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::raw("  "),
+            Span::raw("   "),
             Span::styled("[ Esc ]", fg(Color::Red).add_modifier(Modifier::BOLD)),
         ]),
     ])
@@ -194,14 +184,10 @@ pub fn render_choice_popup(frame: &mut Frame, question: &str) {
 
 pub fn render_message(frame: &mut Frame, message: &Message) {
     let text = Paragraph::new(message.text.to_string())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(fg(SECONDARY_COLOR)),
-        )
+        .block(block_with_border())
         .style(fg(match message.is_error {
             true => Color::Red,
-            false => TERTIARY_COLOR,
+            false => TEXT_COLOR,
         }))
         .wrap(Wrap { trim: true });
 
@@ -228,7 +214,9 @@ pub fn render_message(frame: &mut Frame, message: &Message) {
 }
 
 pub fn make_row_widget<'a>(item: &'a TrashEntry, ranges: Option<Vec<Range<usize>>>) -> Row<'a> {
-    let date = Span::from(item.date.format("%Y-%m-%d %H:%M:%S").to_string()).fg(TERTIARY_COLOR);
+    let date = Span::from(item.date.format("%d-%m-%Y %H:%M:%S").to_string())
+        .fg(TEXT_COLOR)
+        .style(Style::default().dim());
 
     match ranges {
         Some(result) if !result.is_empty() => {
@@ -237,25 +225,36 @@ pub fn make_row_widget<'a>(item: &'a TrashEntry, ranges: Option<Vec<Range<usize>
             let mut i = 0;
             for range in result.iter() {
                 characters
-                    .push(Span::from(item.name[i..range.start].to_string()).fg(TERTIARY_COLOR));
+                    .push(Span::from(item.display_name[i..range.start].to_string()).fg(TEXT_COLOR));
                 i = range.end;
 
                 characters.push(
-                    Span::from(item.name[range.start..range.end].to_string())
+                    Span::from(item.display_name[range.start..range.end].to_string())
                         .bold()
                         .underlined()
                         .fg(TERTIARY_COLOR),
                 );
             }
-            characters
-                .push(Span::from(item.name[i..item.name.len()].to_string()).fg(TERTIARY_COLOR));
+            characters.push(
+                Span::from(item.display_name[i..item.display_name.len()].to_string())
+                    .fg(TEXT_COLOR),
+            );
 
             Row::new(vec![Line::from(characters), Line::from(date)])
         }
-        _ => Row::new(vec![Span::from(item.name.clone()).fg(TERTIARY_COLOR), date]),
+        _ => Row::new(vec![
+            Span::from(item.display_name.clone()).fg(TEXT_COLOR),
+            date,
+        ]),
     }
 }
 
 fn fg(color: Color) -> Style {
     Style::default().fg(color)
+}
+
+fn block_with_border<'a>() -> Block<'a> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(fg(SECONDARY_COLOR))
 }

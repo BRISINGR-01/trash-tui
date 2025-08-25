@@ -1,102 +1,96 @@
 use std::{
     fs::File,
-    io::{self, BufRead},
+    io::{BufRead, BufReader},
     path::PathBuf,
 };
 
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 
 use crate::{
-    files::{get_trash_dirs, parse_line},
+    io::{get_trash_dirs, parse_line},
     ui::Message,
 };
 
 pub struct TrashEntry {
-    pub name: String,
+    pub display_name: String,
     pub info_path: PathBuf,
     pub content_path: PathBuf,
     pub restore_location: PathBuf,
     pub date: DateTime<Local>,
 }
 
+// Example:
+// trash file info path: <trash files dir>/files/video_2.avi
+// trash file contents path: <trash files dir>/files/video_2.avi
+//
+// Info file:
+// [Trash Info]
+// Path=/tmp/%D1%81%D0%B5%D0%B72/video.avi
+// DeletionDate=2025-07-02T13:40:56
+
 impl TrashEntry {
-    pub fn get_content_path(&self) -> PathBuf {
-        let (_, files_dir, _) = get_trash_dirs();
-        files_dir.join(&self.info_path.file_name().unwrap())
-    }
-
-    pub fn from_trash_info(info_path: &PathBuf) -> Result<Self, Message> {
+    pub fn from_trash_info(path_to_info_file: &PathBuf) -> Result<Self, Message> {
         let (_, files_dir, _) = get_trash_dirs();
 
-        match File::open(info_path) {
-            Err(e) => panic!("Error opening trash info file: {}", e),
-            Ok(file) => {
-                let mut lines = io::BufReader::new(file).lines();
-                lines.next(); // Skip the first line (header)
+        let file = File::open(path_to_info_file)
+            .map_err(|e| Message::error(format!("Error opening trash info file: {}", e)))?;
+        let mut lines = BufReader::new(file).lines();
+        lines.next(); // Skip header
 
-                let restore_location = parse_line(&mut lines, info_path)?.replace("Path=", "");
-                let date_str = parse_line(&mut lines, info_path)?.replace("DeletionDate=", "");
+        let restore_location = PathBuf::from(
+            parse_line(&mut lines, path_to_info_file)?
+                .strip_prefix("Path=")
+                .ok_or_else(|| {
+                    Message::error("Missing Path= prefix in restore location".to_string())
+                })?
+                .to_string(),
+        );
 
-                let date =
-                    match NaiveDateTime::parse_from_str(date_str.as_str(), "%Y-%m-%dT%H:%M:%S") {
-                        Ok(dt) => match Local.from_local_datetime(&dt) {
-                            chrono::offset::LocalResult::Single(date) => date,
-                            _ => {
-                                return Err(Message::error(
-                                    "Invalid date format in trash info file".to_string(),
-                                ));
-                            }
-                        },
-                        Err(_) => {
-                            return Err(Message::error(
-                                "Invalid date format in trash info file".to_string(),
-                            ));
-                        }
-                    };
+        let date = extract_date(parse_line(&mut lines, path_to_info_file)?.as_str())?;
 
-                let name = match PathBuf::from(&restore_location).file_name() {
-                    Some(name) => urlencoding::decode(name.to_str().unwrap())
-                        .unwrap()
-                        .to_string(),
-                    None => {
-                        return Err(Message::error(
-                            "Invalid file name in trash info file".to_string(),
-                        ));
-                    }
-                };
+        let file_name = restore_location
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| Message::error("Invalid or missing file name".to_string()))?;
 
-                let content_path = match info_path.file_stem() {
-                    Some(name) => match name.to_str() {
-                        Some(name) => name,
-                        None => {
-                            return Err(Message::error(
-                                "Invalid file name in trash info file".to_string(),
-                            ));
-                        }
-                    },
-                    None => {
-                        return Err(Message::error(
-                            "Invalid file name in trash info file".to_string(),
-                        ));
-                    }
-                };
+        let display_name = urlencoding::decode(file_name)
+            .map_err(|e| Message::error(format!("Failed to decode filename: {}", e)))?
+            .to_string();
 
-                Ok(TrashEntry {
-                    name,
-                    restore_location: PathBuf::from(&restore_location),
-                    info_path: info_path.to_owned(),
-                    content_path: files_dir.join(content_path),
-                    date,
-                })
-            }
-        }
+        Ok(TrashEntry {
+            display_name,
+            info_path: path_to_info_file.clone(),
+            content_path: files_dir.join(
+                path_to_info_file
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or_else(|| Message::error("Invalid info file name".to_string()))?,
+            ),
+            restore_location,
+            date,
+        })
     }
+}
+
+fn extract_date(date_str: &str) -> Result<DateTime<Local>, Message> {
+    let date_str = date_str
+        .strip_prefix("DeletionDate=")
+        .ok_or_else(|| Message::error("Missing DeletionDate= prefix".to_string()))?
+        .to_string();
+
+    let naive_date = NaiveDateTime::parse_from_str(&date_str, "%Y-%m-%dT%H:%M:%S")
+        .map_err(|_| Message::error("Invalid date format in trash info file".to_string()))?;
+
+    Local
+        .from_local_datetime(&naive_date)
+        .single()
+        .ok_or_else(|| Message::error("Ambiguous or invalid local datetime".to_string()))
 }
 
 impl Clone for TrashEntry {
     fn clone(&self) -> Self {
-        TrashEntry {
-            name: self.name.clone(),
+        Self {
+            display_name: self.display_name.clone(),
             info_path: self.info_path.clone(),
             content_path: self.content_path.clone(),
             restore_location: self.restore_location.clone(),
